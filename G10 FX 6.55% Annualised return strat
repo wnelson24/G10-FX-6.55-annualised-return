@@ -1,0 +1,76 @@
+from AlgorithmImports import *
+
+class G10CarryStrategy(QCAlgorithm):
+
+    def Initialize(self):
+        self.SetStartDate(2018, 1, 1)
+        self.SetEndDate(2020, 4, 30)
+        self.SetCash(100000)
+
+        self.leverage = 8
+        self.rebalance_month = -1
+
+        self.g10_pairs = [
+            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD",
+            "NZDUSD", "USDCAD", "USDNOK", "USDSEK", "USDJPY"
+        ]
+
+        self.symbols = {}
+        for fx in self.g10_pairs:
+            symbol = self.AddForex(fx, Resolution.Daily, Market.Oanda, leverage=self.leverage).Symbol
+            self.symbols[fx] = symbol
+
+        self.Schedule.On(self.DateRules.MonthStart(), self.TimeRules.AfterMarketOpen("EURUSD", 1), self.Rebalance)
+
+    def Rebalance(self):
+        current_month = self.Time.month
+        if current_month == self.rebalance_month:
+            return
+        self.rebalance_month = current_month
+
+        carry_scores = {}
+        for fx, symbol in self.symbols.items():
+            if not self.Securities.ContainsKey(symbol) or not self.Securities[symbol].HasData:
+                continue
+            rate_base = self.GetInterestRate(fx[:3])
+            rate_quote = self.GetInterestRate(fx[3:])
+            if rate_base is None or rate_quote is None:
+                continue
+            carry = rate_base - rate_quote
+            carry_scores[symbol] = carry
+
+        if len(carry_scores) < 6:
+            self.Debug("Not enough data to form positions.")
+            return
+
+        sorted_scores = sorted(carry_scores.items(), key=lambda x: x[1], reverse=True)
+        top = [x[0] for x in sorted_scores[:3]]
+        bottom = [x[0] for x in sorted_scores[-3:]]
+
+        self.Liquidate()
+
+        gross_leverage = self.leverage
+        allocation = gross_leverage / (len(top) + len(bottom))
+
+        for symbol in top:
+            self.SetHoldings(symbol, allocation)
+
+        for symbol in bottom:
+            self.SetHoldings(symbol, -allocation)
+
+        self.Debug(f"{self.Time.date()} — LONG: {[str(s) for s in top]}, SHORT: {[str(s) for s in bottom]}")
+
+    def GetInterestRate(self, currency):
+        rates = {
+            "USD": 2.0,
+            "EUR": -0.5,
+            "GBP": 0.75,
+            "JPY": -0.1,
+            "CHF": -0.75,
+            "AUD": 1.0,
+            "NZD": 1.0,
+            "CAD": 1.75,
+            "NOK": 1.5,
+            "SEK": 0.25
+        }
+        return rates.get(currency, None)
