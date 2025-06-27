@@ -1,0 +1,1 @@
+# G10-FX-6.55-annualised-return
